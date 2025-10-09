@@ -475,6 +475,46 @@ export class BubbleShooterEngine {
   }
 
   // --- Utility Functions ---
+  private findConnectedBubbles = (startRow: number, startCol: number, color: string): Bubble[] => {
+    const visited = new Set<string>();
+    const matches: Bubble[] = [];
+    const queue = [{ row: startRow, col: startCol }];
+    while (queue.length > 0) {
+        const { row, col } = queue.shift()!;
+        const key = `${row},${col}`;
+        if (!this.isValidGridPos(row, col) || visited.has(key)) continue;
+        visited.add(key);
+        const bubble = this.bubbleGrid[row][col];
+        if (!bubble || bubble.color !== color) continue;
+        matches.push(bubble);
+        queue.push(...this.getAdjacentGridCoords(row, col));
+    }
+    return matches;
+  };
+
+  private findFloatingBubbles = (): Bubble[] => {
+    const connected = new Set<string>();
+    for (let c = 0; c < this.getColsInRow(0); c++) {
+      if (this.bubbleGrid[0][c]) this.markConnected(0, c, connected);
+    }
+    const floating: Bubble[] = [];
+    for (let r = 0; r < this.gridRows; r++) {
+      for (let c = 0; c < this.getColsInRow(r); c++) {
+        if (this.bubbleGrid[r][c] && !connected.has(`${r},${c}`)) {
+          floating.push(this.bubbleGrid[r][c]!);
+        }
+      }
+    }
+    return floating;
+  };
+  
+  private markConnected = (r: number, c: number, connected: Set<string>) => {
+    const key = `${r},${c}`;
+    if (!this.isValidGridPos(r, c) || connected.has(key) || !this.bubbleGrid[r][c]) return;
+    connected.add(key);
+    this.getAdjacentGridCoords(r, c).forEach(p => this.markConnected(p.row, p.col, connected));
+  };
+
   private getColorsOnScreen = () => new Set(this.bubbleGrid.flat().filter(b => b).map(b => b!.color));
   private isLevelClear = () => this.bubbleGrid.flat().every(b => b === null);
   private getColsInRow = (row: number) => this.gridCols - (row % 2);
