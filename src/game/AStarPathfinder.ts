@@ -39,7 +39,7 @@ export class AStarPathfinder {
     openSet.push(startNode);
 
     let iterations = 0;
-    const maxIterations = 500;
+    const maxIterations = 250;
 
     while (openSet.length > 0 && iterations < maxIterations) {
       iterations++;
