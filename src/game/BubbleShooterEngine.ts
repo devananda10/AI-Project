@@ -142,14 +142,20 @@ export class BubbleShooterEngine {
   
   private countBubblesLeft() {
     let count = 0;
+    let maxRow = 0;
     for (let row = 0; row < this.gridRows; row++) {
       for (let col = 0; col < this.gridCols; col++) {
-        if (this.bubbleGrid[row][col]) count++;
+        if (this.bubbleGrid[row][col]) {
+            count++;
+            if (row > maxRow) {
+                maxRow = row;
+            }
+        }
       }
     }
     this.stats.bubblesLeft = count;
     
-    if (count === 0) {
+    if (count === 0 || maxRow >= this.gridRows -1) {
       this.gameOver = true;
       this.callbacks.onGameStateChange({ gameOver: true });
     }
@@ -297,7 +303,7 @@ export class BubbleShooterEngine {
     const dx = targetX - this.shooterX;
     const dy = targetY - this.shooterY;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const speed = 8;
+    const speed = 15;
     
     this.shootingBubble = {
       x: this.shooterX,
@@ -575,7 +581,7 @@ export class BubbleShooterEngine {
   private drawPath() {
     if (this.currentPath.length < 2) return;
     
-    this.ctx.strokeStyle = '#96ceb4';
+    this.ctx.strokeStyle = '#333';
     this.ctx.lineWidth = 4;
     this.ctx.setLineDash([10, 5]);
     this.ctx.lineCap = 'round';
@@ -590,7 +596,7 @@ export class BubbleShooterEngine {
     this.ctx.setLineDash([]);
     
     // Draw path points
-    this.ctx.fillStyle = '#96ceb4';
+    this.ctx.fillStyle = '#333';
     for (const point of this.currentPath) {
       this.ctx.beginPath();
       this.ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
@@ -707,7 +713,7 @@ export class BubbleShooterEngine {
       const dx = x - this.shooterX;
       const dy = y - this.shooterY;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const speed = 8;
+      const speed = 15;
       
       this.shootingBubble = {
         x: this.shooterX,
