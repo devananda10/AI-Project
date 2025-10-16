@@ -1,4 +1,223 @@
+import { AStarPathfinder } from './AStarPathfinder';
+import { ParticleSystem } from './ParticleSystem';
+
+export interface GameStats {
+  score: number;
+  level: number;
+  bubblesLeft: number;
+  shots: number;
+  astarCalculations: number;
+  pathLength: number;
+  accuracy: number;
 }
+
+export interface GameCallbacks {
+  onStatsUpdate: (stats: GameStats) => void;
+  onGameStateChange: (state: any) => void;
+}
+
+export interface Bubble {
+  x: number;
+  y: number;
+  color: string;
+  radius: number;
+  row?: number;
+  col?: number;
+}
+
+export class BubbleShooterEngine {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private width: number;
+  private height: number;
+  private callbacks: GameCallbacks;
+ 
+  private bubbleRadius = 20;
+  private bubbleGrid: (Bubble | null)[][] = [];
+  private gridRows = 12;
+  private gridCols = 20;
+  private colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3'];
+ 
+  private currentBubble: Bubble | null = null;
+  private nextBubble: Bubble | null = null;
+  private shooterX = 0;
+  private shooterY = 0;
+ 
+  private aiMode = false;
+  private showPath = true;
+  private isPaused = false;
+  private gameOver = false;
+ 
+  private stats: GameStats = {
+    score: 0,
+    level: 1,
+    bubblesLeft: 0,
+    shots: 0,
+    astarCalculations: 0,
+    pathLength: 0,
+    accuracy: 100
+  };
+ 
+  private pathfinder: AStarPathfinder;
+  private particleSystem: ParticleSystem;
+  private currentPath: any[] = [];
+ 
+  private animationFrame: number | null = null;
+  private lastTime = 0;
+ 
+  private shootingBubble: {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    color: string;
+    active: boolean;
+  } | null = null;
+
+  constructor(canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d')!;
+    this.width = canvas.width;
+    this.height = canvas.height;
+    this.callbacks = callbacks;
+   
+    this.shooterX = this.width / 2;
+    this.shooterY = this.height - 40;
+   
+    this.pathfinder = new AStarPathfinder();
+    this.particleSystem = new ParticleSystem(this.ctx);
+   
+    this.initializeGame();
+    this.startGameLoop();
+  }
+ 
+  private initializeGame() {
+    // Initialize bubble grid
+    this.bubbleGrid = Array(this.gridRows).fill(null).map(() => Array(this.gridCols).fill(null));
+   
+    // Create initial bubble formation
+    this.createLevel();
+   
+    // Create current and next bubbles
+    this.currentBubble = this.createRandomBubble();
+    this.nextBubble = this.createRandomBubble();
+   
+    this.updateStats();
+    this.calculateAIPath();
+  }
+ 
+  private createLevel() {
+    const levelRows = Math.min(6 + this.stats.level, this.gridRows - 2);
+   
+    for (let row = 0; row < levelRows; row++) {
+      const colsInRow = this.gridCols - (row % 2);
+      for (let col = 0; col < colsInRow; col++) {
+        if (Math.random() < 0.8) { // 80% chance of bubble
+          const x = col * (this.bubbleRadius * 2) + (row % 2) * this.bubbleRadius + this.bubbleRadius;
+          const y = row * (this.bubbleRadius * 1.7) + this.bubbleRadius;
+         
+          this.bubbleGrid[row][col] = {
+            x,
+            y,
+            color: this.colors[Math.floor(Math.random() * this.colors.length)],
+            radius: this.bubbleRadius,
+            row,
+            col
+          };
+        }
+      }
+    }
+   
+    this.countBubblesLeft();
+  }
+ 
+  private createRandomBubble(): Bubble {
+    return {
+      x: this.shooterX,
+      y: this.shooterY,
+      color: this.colors[Math.floor(Math.random() * this.colors.length)],
+      radius: this.bubbleRadius
+    };
+  }
+ 
+  private countBubblesLeft() {
+    let count = 0;
+    let maxRow = 0;
+    for (let row = 0; row < this.gridRows; row++) {
+      for (let col = 0; col < this.gridCols; col++) {
+        if (this.bubbleGrid[row][col]) {
+            count++;
+            if (row > maxRow) {
+                maxRow = row;
+            }
+        }
+      }
+    }
+    this.stats.bubblesLeft = count;
+   
+    if (count === 0 || maxRow >= this.gridRows -1) {
+      this.gameOver = true;
+      this.callbacks.onGameStateChange({ gameOver: true });
+    }
+  }
+ 
+  private calculateAIPath() {
+    if (!this.currentBubble) return;
+   
+    this.stats.astarCalculations++;
+   
+    // Find best target position using A*
+    const targets = this.findPotentialTargets();
+    let bestPath: any[] = [];
+    let bestScore = -1;
+   
+    for (const target of targets) {
+      const path = this.pathfinder.findPath(
+        { x: this.shooterX, y: this.shooterY },
+        target,
+        this.getBubbleObstacles(),
+        {
+          canvasWidth: this.width,
+          canvasHeight: this.height,
+          bubbleRadius: this.bubbleRadius
+        }
+      );
+     
+      if (path.length > 0) {
+        const score = this.evaluateTarget(target);
+        if (score > bestScore) {
+          bestScore = score;
+          bestPath = path;
+        }
+      }
+    }
+   
+    this.currentPath = bestPath;
+    this.stats.pathLength = bestPath.length;
+    this.updateStats();
+  }
+ 
+  private findPotentialTargets(): any[] {
+    const targets: any[] = [];
+   
+    if (!this.currentBubble) return targets;
+   
+    // Find bubbles of the same color
+    for (let row = 0; row < this.gridRows; row++) {
+      for (let col = 0; col < this.gridCols; col++) {
+        const bubble = this.bubbleGrid[row][col];
+        if (bubble && bubble.color === this.currentBubble.color) {
+          // Add adjacent empty positions as targets
+          const adjacent = this.getAdjacentPositions(row, col);
+          for (const pos of adjacent) {
+            if (!this.bubbleGrid[pos.row][pos.col]) {
+              const x = pos.col * (this.bubbleRadius * 2) + (pos.row % 2) * this.bubbleRadius + this.bubbleRadius;
+              const y = pos.row * (this.bubbleRadius * 1.7) + this.bubbleRadius;
+              targets.push({ x, y, row: pos.row, col: pos.col });
+            }
+          }
+        }
+      }
     }
    
     return targets;
