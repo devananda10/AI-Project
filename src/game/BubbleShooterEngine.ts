@@ -82,7 +82,7 @@ export class BubbleShooterEngine {
     this.callbacks = callbacks;
     
     this.shooterX = this.width / 2;
-    this.shooterY = this.height - 40;
+    this.shooterY = this.height - 30;
     
     this.pathfinder = new AStarPathfinder();
     this.particleSystem = new ParticleSystem(this.ctx);
@@ -107,12 +107,12 @@ export class BubbleShooterEngine {
   }
   
   private createLevel() {
-    const levelRows = Math.min(6 + this.stats.level, this.gridRows - 2);
+    const levelRows = Math.min(4 + Math.floor(this.stats.level / 2), 8);
     
     for (let row = 0; row < levelRows; row++) {
       const colsInRow = this.gridCols - (row % 2);
       for (let col = 0; col < colsInRow; col++) {
-        if (Math.random() < 0.8) { // 80% chance of bubble
+        if (Math.random() < 0.85) { // 85% chance of bubble
           const x = col * (this.bubbleRadius * 2) + (row % 2) * this.bubbleRadius + this.bubbleRadius;
           const y = row * (this.bubbleRadius * 1.7) + this.bubbleRadius;
           
@@ -160,34 +160,19 @@ export class BubbleShooterEngine {
     
     this.stats.astarCalculations++;
     
-    // Find best target position using A*
-    const targets = this.findPotentialTargets();
-    let bestPath: any[] = [];
-    let bestScore = -1;
-    
-    for (const target of targets) {
-      const path = this.pathfinder.findPath(
+    // Simple straight line path to best target
+    const bestTarget = this.findBestTarget();
+    if (bestTarget) {
+      this.currentPath = [
         { x: this.shooterX, y: this.shooterY },
-        target,
-        this.getBubbleObstacles(),
-        {
-          canvasWidth: this.width,
-          canvasHeight: this.height,
-          bubbleRadius: this.bubbleRadius
-        }
-      );
-      
-      if (path.length > 0) {
-        const score = this.evaluateTarget(target);
-        if (score > bestScore) {
-          bestScore = score;
-          bestPath = path;
-        }
-      }
+        { x: bestTarget.x, y: bestTarget.y }
+      ];
+      this.stats.pathLength = 2;
+    } else {
+      this.currentPath = [];
+      this.stats.pathLength = 0;
     }
     
-    this.currentPath = bestPath;
-    this.stats.pathLength = bestPath.length;
     this.updateStats();
   }
   
@@ -217,6 +202,43 @@ export class BubbleShooterEngine {
     return targets;
   }
   
+  private findBestTarget(): any {
+    const targets = this.findPotentialTargets();
+    if (targets.length === 0) {
+      // If no same-color targets, find any valid position
+      for (let row = 0; row < Math.min(8, this.gridRows); row++) {
+        for (let col = 0; col < this.gridCols - (row % 2); col++) {
+          if (!this.bubbleGrid[row][col]) {
+            const x = col * (this.bubbleRadius * 2) + (row % 2) * this.bubbleRadius + this.bubbleRadius;
+            const y = row * (this.bubbleRadius * 1.7) + this.bubbleRadius;
+            return { x, y, row, col };
+          }
+        }
+      }
+      return null;
+    }
+    
+    // Find closest target
+    let bestTarget = targets[0];
+    let minDistance = this.distance({ x: this.shooterX, y: this.shooterY }, bestTarget);
+    
+    for (const target of targets) {
+      const distance = this.distance({ x: this.shooterX, y: this.shooterY }, target);
+      if (distance < minDistance) {
+        minDistance = distance;
+        bestTarget = target;
+      }
+    }
+    
+    return bestTarget;
+  }
+  
+  private distance(a: any, b: any): number {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  
   private getAdjacentPositions(row: number, col: number): { row: number; col: number }[] {
     const adjacent: { row: number; col: number }[] = [];
     const isEvenRow = row % 2 === 0;
@@ -230,7 +252,7 @@ export class BubbleShooterEngine {
       const newCol = col + dc;
       
       if (newRow >= 0 && newRow < this.gridRows && 
-          newCol >= 0 && newCol < this.gridCols) {
+          newCol >= 0 && newCol < (this.gridCols - (newRow % 2))) {
         adjacent.push({ row: newRow, col: newCol });
       }
     }
@@ -282,12 +304,12 @@ export class BubbleShooterEngine {
   }
   
   public shoot() {
-    if (!this.currentBubble || this.shootingBubble?.active || this.isPaused) return;
+    if (!this.currentBubble || this.shootingBubble?.active || this.isPaused || this.gameOver) return;
     
     this.stats.shots++;
     
-    let targetX = this.width / 2;
-    let targetY = this.height / 4;
+    let targetX = this.shooterX;
+    let targetY = this.shooterY - 100;
     
     if (this.aiMode && this.currentPath.length > 1) {
       targetX = this.currentPath[1].x;
@@ -297,7 +319,7 @@ export class BubbleShooterEngine {
     const dx = targetX - this.shooterX;
     const dy = targetY - this.shooterY;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const speed = 8;
+    const speed = 12;
     
     this.shootingBubble = {
       x: this.shooterX,
@@ -328,6 +350,20 @@ export class BubbleShooterEngine {
       this.particleSystem.createSpark(this.shootingBubble.x, this.shootingBubble.y, '#ffffff', 5);
     }
     
+    // Check if reached top - place bubble
+    if (this.shootingBubble.y <= this.bubbleRadius) {
+      this.handleTopCollision();
+      return;
+    }
+    
+    // Check if bubble goes too far down - missed shot
+    if (this.shootingBubble.y > this.height - 30) {
+      this.shootingBubble.active = false;
+      this.shootingBubble = null;
+      this.finishShot();
+      return;
+    }
+    
     // Check collision with bubbles
     for (let row = 0; row < this.gridRows; row++) {
       for (let col = 0; col < this.gridCols; col++) {
@@ -344,24 +380,32 @@ export class BubbleShooterEngine {
         }
       }
     }
-    
-    // Check if reached top
-    if (this.shootingBubble.y <= this.bubbleRadius) {
-      this.handleTopCollision();
-    }
   }
   
   private handleBubbleCollision(hitRow: number, hitCol: number) {
     if (!this.shootingBubble || !this.currentBubble) return;
     
-    // Find empty adjacent position
+    // Find the best empty adjacent position closest to the shooting bubble
     const adjacent = this.getAdjacentPositions(hitRow, hitCol);
     let targetPos = null;
+    let minDistance = Infinity;
     
     for (const pos of adjacent) {
-      if (!this.bubbleGrid[pos.row][pos.col]) {
-        targetPos = pos;
-        break;
+      if (pos.row >= 0 && pos.row < this.gridRows && 
+          pos.col >= 0 && pos.col < this.gridCols && 
+          !this.bubbleGrid[pos.row][pos.col]) {
+        
+        const x = pos.col * (this.bubbleRadius * 2) + (pos.row % 2) * this.bubbleRadius + this.bubbleRadius;
+        const y = pos.row * (this.bubbleRadius * 1.7) + this.bubbleRadius;
+        const distance = Math.sqrt(
+          Math.pow(this.shootingBubble.x - x, 2) + 
+          Math.pow(this.shootingBubble.y - y, 2)
+        );
+        
+        if (distance < minDistance) {
+          minDistance = distance;
+          targetPos = pos;
+        }
       }
     }
     
@@ -384,9 +428,43 @@ export class BubbleShooterEngine {
       
       // Check for matches
       this.checkMatches(targetPos.row, targetPos.col);
+    } else {
+      // If no adjacent position found, try to place at the collision point
+      this.handleDirectPlacement();
     }
     
     this.finishShot();
+  }
+  
+  private handleDirectPlacement() {
+    if (!this.shootingBubble) return;
+    
+    // Calculate grid position based on shooting bubble position
+    const col = Math.round((this.shootingBubble.x - this.bubbleRadius) / (this.bubbleRadius * 2));
+    const row = Math.round((this.shootingBubble.y - this.bubbleRadius) / (this.bubbleRadius * 1.7));
+    
+    // Find the first available row from top
+    for (let r = Math.max(0, row); r < this.gridRows; r++) {
+      const adjustedCol = Math.max(0, Math.min(this.gridCols - 1 - (r % 2), col));
+      
+      if (!this.bubbleGrid[r][adjustedCol]) {
+        const x = adjustedCol * (this.bubbleRadius * 2) + (r % 2) * this.bubbleRadius + this.bubbleRadius;
+        const y = r * (this.bubbleRadius * 1.7) + this.bubbleRadius;
+        
+        this.bubbleGrid[r][adjustedCol] = {
+          x,
+          y,
+          color: this.shootingBubble.color,
+          radius: this.bubbleRadius,
+          row: r,
+          col: adjustedCol
+        };
+        
+        this.particleSystem.createExplosion(x, y, this.shootingBubble.color, 12);
+        this.checkMatches(r, adjustedCol);
+        break;
+      }
+    }
   }
   
   private handleTopCollision() {
@@ -412,6 +490,28 @@ export class BubbleShooterEngine {
       
       this.particleSystem.createExplosion(x, y, this.shootingBubble.color, 12);
       this.checkMatches(0, clampedCol);
+    } else {
+      // Find first available position in the column
+      for (let row = 1; row < this.gridRows; row++) {
+        const adjustedCol = Math.max(0, Math.min(this.gridCols - 1 - (row % 2), clampedCol));
+        if (!this.bubbleGrid[row][adjustedCol]) {
+          const x = adjustedCol * (this.bubbleRadius * 2) + (row % 2) * this.bubbleRadius + this.bubbleRadius;
+          const y = row * (this.bubbleRadius * 1.7) + this.bubbleRadius;
+          
+          this.bubbleGrid[row][adjustedCol] = {
+            x,
+            y,
+            color: this.shootingBubble.color,
+            radius: this.bubbleRadius,
+            row,
+            col: adjustedCol
+          };
+          
+          this.particleSystem.createExplosion(x, y, this.shootingBubble.color, 12);
+          this.checkMatches(row, adjustedCol);
+          break;
+        }
+      }
     }
     
     this.finishShot();
@@ -512,7 +612,10 @@ export class BubbleShooterEngine {
   }
   
   private finishShot() {
-    this.shootingBubble = null;
+    if (this.shootingBubble) {
+      this.shootingBubble.active = false;
+      this.shootingBubble = null;
+    }
     
     // Move to next bubble
     this.currentBubble = this.nextBubble;
@@ -532,11 +635,17 @@ export class BubbleShooterEngine {
   private draw(time: number) {
     // Clear canvas
     const gradient = this.ctx.createLinearGradient(0, 0, 0, this.height);
-    gradient.addColorStop(0, '#001122');
-    gradient.addColorStop(0.5, '#003366');
-    gradient.addColorStop(1, '#001122');
+    gradient.addColorStop(0, '#000033');
+    gradient.addColorStop(0.3, '#001155');
+    gradient.addColorStop(0.7, '#002244');
+    gradient.addColorStop(1, '#000011');
     this.ctx.fillStyle = gradient;
     this.ctx.fillRect(0, 0, this.width, this.height);
+    
+    // Draw game area border
+    this.ctx.strokeStyle = '#444444';
+    this.ctx.lineWidth = 2;
+    this.ctx.strokeRect(1, 1, this.width - 2, this.height - 2);
     
     // Draw AI path
     if (this.showPath && this.currentPath.length > 1) {
@@ -573,29 +682,23 @@ export class BubbleShooterEngine {
   }
   
   private drawPath() {
+    if (!this.showPath) return;
     if (this.currentPath.length < 2) return;
     
-    this.ctx.strokeStyle = '#96ceb4';
+    // Draw simple straight line path
+    this.ctx.strokeStyle = '#00ff88';
     this.ctx.lineWidth = 4;
-    this.ctx.setLineDash([10, 5]);
+    this.ctx.setLineDash([8, 4]);
     this.ctx.lineCap = 'round';
+    this.ctx.shadowColor = '#00ff88';
+    this.ctx.shadowBlur = 8;
     
     this.ctx.beginPath();
     this.ctx.moveTo(this.currentPath[0].x, this.currentPath[0].y);
-    
-    for (let i = 1; i < this.currentPath.length; i++) {
-      this.ctx.lineTo(this.currentPath[i].x, this.currentPath[i].y);
-    }
+    this.ctx.lineTo(this.currentPath[this.currentPath.length - 1].x, this.currentPath[this.currentPath.length - 1].y);
     this.ctx.stroke();
     this.ctx.setLineDash([]);
-    
-    // Draw path points
-    this.ctx.fillStyle = '#96ceb4';
-    for (const point of this.currentPath) {
-      this.ctx.beginPath();
-      this.ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
-      this.ctx.fill();
-    }
+    this.ctx.shadowBlur = 0;
   }
   
   private drawBubbleGrid() {
@@ -643,18 +746,9 @@ export class BubbleShooterEngine {
     this.ctx.arc(this.shooterX, this.shooterY, this.bubbleRadius + 5, 0, Math.PI * 2);
     this.ctx.fill();
     
-    // Draw aiming line
-    if (this.currentPath.length > 1) {
-      const target = this.currentPath[1];
-      this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-      this.ctx.lineWidth = 2;
-      this.ctx.setLineDash([5, 5]);
-      this.ctx.beginPath();
-      this.ctx.moveTo(this.shooterX, this.shooterY);
-      this.ctx.lineTo(target.x, target.y);
-      this.ctx.stroke();
-      this.ctx.setLineDash([]);
-    }
+    // Draw shooter cannon
+    this.ctx.fillStyle = '#666666';
+    this.ctx.fillRect(this.shooterX - 3, this.shooterY - 25, 6, 20);
   }
   
   private lightenColor(color: string, percent: number): string {
@@ -688,8 +782,8 @@ export class BubbleShooterEngine {
         this.updateShootingBubble();
         
         // Auto-shoot in AI mode
-        if (this.aiMode && !this.shootingBubble?.active) {
-          setTimeout(() => this.shoot(), 1000);
+        if (this.aiMode && !this.shootingBubble?.active && !this.gameOver) {
+          setTimeout(() => this.shoot(), 800);
         }
         
         this.draw(time);
@@ -702,12 +796,14 @@ export class BubbleShooterEngine {
   }
   
   public handleClick(x: number, y: number) {
-    if (!this.aiMode && !this.shootingBubble?.active) {
-      // Manual aiming - calculate trajectory to click point
+    if (this.shootingBubble?.active || this.isPaused || this.gameOver) return;
+    
+    if (!this.aiMode) {
+      // Manual shooting - shoot towards click position
       const dx = x - this.shooterX;
       const dy = y - this.shooterY;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const speed = 8;
+      const speed = 12;
       
       this.shootingBubble = {
         x: this.shooterX,
@@ -720,6 +816,9 @@ export class BubbleShooterEngine {
       
       this.stats.shots++;
       this.particleSystem.createExplosion(this.shooterX, this.shooterY, this.currentBubble?.color || '#ff6b6b', 8);
+    } else {
+      // AI mode - use calculated path
+      this.shoot();
     }
   }
   
